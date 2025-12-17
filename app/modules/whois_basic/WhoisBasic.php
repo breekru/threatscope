@@ -3,9 +3,9 @@ declare(strict_types=1);
 
 class WhoisBasic implements ModuleInterface {
     public function getName(): string { return 'whois_basic'; }
-    public function getVersion(): string { return '1.0.0'; }
+    public function getVersion(): string { return '1.1.0'; }
 
-    // Keep this low — WHOIS rate limits are real
+    // Keep conservative
     public function getRateLimit(): int { return 10; }
 
     public function run(string $domain): array {
@@ -13,44 +13,84 @@ class WhoisBasic implements ModuleInterface {
         $obs = [];
         $sig = [];
 
-        // Run whois via shell (most reliable on shared hosting)
-        $cmd = escapeshellcmd("whois {$domain}");
-        $output = @shell_exec($cmd);
-
-        if (!$output) {
+        // Use IANA bootstrap to find RDAP server
+        $rdapUrl = $this->discoverRdapEndpoint($domain);
+        if (!$rdapUrl) {
             return [
                 'observations' => [],
                 'signals' => [['name' => 'whois_available', 'value' => 'false']]
             ];
         }
 
-        // Store raw WHOIS (truncated for sanity)
-        $obs[] = ['key' => 'whois_raw', 'value' => substr($output, 0, 8000)];
+        $json = $this->httpGetJson($rdapUrl);
+        if (!$json) {
+            return [
+                'observations' => [],
+                'signals' => [['name' => 'whois_available', 'value' => 'false']]
+            ];
+        }
+
+        $obs[] = ['key' => 'rdap_source', 'value' => $rdapUrl];
         $sig[] = ['name' => 'whois_available', 'value' => 'true'];
 
-        // Parse creation date
-        if (preg_match('/Creation Date:\s*(.+)/i', $output, $m) ||
-            preg_match('/Created On:\s*(.+)/i', $output, $m)) {
+        // Registrar
+        if (!empty($json['registrar']['name'])) {
+            $obs[] = ['key' => 'registrar', 'value' => $json['registrar']['name']];
+        }
 
-            $dateStr = trim($m[1]);
-            $obs[] = ['key' => 'domain_created', 'value' => $dateStr];
+        // Events (creation date)
+        if (!empty($json['events']) && is_array($json['events'])) {
+            foreach ($json['events'] as $e) {
+                if (($e['eventAction'] ?? '') === 'registration' && !empty($e['eventDate'])) {
+                    $obs[] = ['key' => 'domain_created', 'value' => $e['eventDate']];
 
-            $createdTs = strtotime($dateStr);
-            if ($createdTs) {
-                $ageDays = (int)floor((time() - $createdTs) / 86400);
-                $obs[] = ['key' => 'domain_age_days', 'value' => (string)$ageDays];
+                    $ts = strtotime($e['eventDate']);
+                    if ($ts) {
+                        $ageDays = (int)floor((time() - $ts) / 86400);
+                        $obs[] = ['key' => 'domain_age_days', 'value' => (string)$ageDays];
 
-                if ($ageDays <= 30) {
-                    $sig[] = ['name' => 'new_domain', 'value' => 'true'];
+                        if ($ageDays <= 30) {
+                            $sig[] = ['name' => 'new_domain', 'value' => 'true'];
+                        }
+                    }
                 }
             }
         }
 
-        // Parse registrar
-        if (preg_match('/Registrar:\s*(.+)/i', $output, $m)) {
-            $obs[] = ['key' => 'registrar', 'value' => trim($m[1])];
-        }
-
         return ['observations' => $obs, 'signals' => $sig];
+    }
+
+    private function discoverRdapEndpoint(string $domain): ?string {
+        // Basic TLD extraction
+        $parts = explode('.', $domain);
+        if (count($parts) < 2) return null;
+        $tld = '.' . end($parts);
+
+        // Minimal static map (expand later if needed)
+        $map = [
+            '.com' => 'https://rdap.verisign.com/com/v1/domain/',
+            '.net' => 'https://rdap.verisign.com/net/v1/domain/',
+            '.org' => 'https://rdap.publicinterestregistry.org/rdap/domain/',
+            '.info' => 'https://rdap.afilias.net/rdap/domain/',
+        ];
+
+        if (!isset($map[$tld])) return null;
+        return $map[$tld] . $domain;
+    }
+
+    private function httpGetJson(string $url): ?array {
+        $ctx = stream_context_create([
+            'http' => [
+                'method' => 'GET',
+                'timeout' => 10,
+                'header'  => "Accept: application/json\r\nUser-Agent: ThreatScope/1.0\r\n"
+            ]
+        ]);
+
+        $raw = @file_get_contents($url, false, $ctx);
+        if (!$raw) return null;
+
+        $json = json_decode($raw, true);
+        return is_array($json) ? $json : null;
     }
 }
