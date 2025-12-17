@@ -44,10 +44,11 @@ class ModuleLoader {
             }
 
             $modules[] = [
-                'db_id'  => (int)$r['id'],
+                'id'     => (int)$r['id'],   // 🔑 KEY CHANGE
                 'name'   => $name,
                 'object' => $obj,
             ];
+            
         }
 
         return $modules;
