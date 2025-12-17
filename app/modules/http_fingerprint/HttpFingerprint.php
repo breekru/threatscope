@@ -62,11 +62,11 @@ class HttpFingerprint implements ModuleInterface {
         }
 
         // Favicon hash
-        $faviconHash = $this->fetchFaviconHash($result['final_url'] ?? '');
-        if ($faviconHash) {
-            $obs[] = ['key' => 'favicon_hash_md5', 'value' => $faviconHash];
-            $sig[] = ['name' => 'favicon_present', 'value' => 'true'];
-        }
+        $faviconHash = $this->fetchFaviconHash(
+            $result['final_url'] ?? '',
+            $result['html'] ?? null
+        );
+        
 
         return ['observations' => $obs, 'signals' => $sig];
     }
@@ -154,20 +154,65 @@ class HttpFingerprint implements ModuleInterface {
         return false;
     }
 
-    private function fetchFaviconHash(string $baseUrl): ?string {
-        if (!$baseUrl) return null;
-
-        $faviconUrl = rtrim($baseUrl, '/') . '/favicon.ico';
-        $ctx = stream_context_create([
-            'http' => ['timeout' => 10],
-            'ssl'  => ['verify_peer' => false, 'verify_peer_name' => false]
-        ]);
-
-        $data = @file_get_contents($faviconUrl, false, $ctx);
-        if (!$data) return null;
-
-        return md5($data);
+    private function fetchFaviconHash(string $baseUrl, ?string $html = null): ?string {
+        $faviconUrls = [];
+    
+        // Parse <link rel="icon"> from HTML
+        if ($html && preg_match_all('/<link[^>]+rel=["\']?(icon|shortcut icon)["\']?[^>]*>/i', $html, $matches)) {
+            foreach ($matches[0] as $tag) {
+                if (preg_match('/href=["\']([^"\']+)["\']/i', $tag, $m)) {
+                    $faviconUrls[] = $this->resolveUrl($baseUrl, $m[1]);
+                }
+            }
+        }
+    
+        // Fallback
+        $faviconUrls[] = rtrim($baseUrl, '/') . '/favicon.ico';
+    
+        foreach (array_unique($faviconUrls) as $url) {
+            $data = $this->curlGetBinary($url);
+            if (!$data || strlen($data) < 100) continue;
+    
+            // Validate it's an image
+            $finfo = new finfo(FILEINFO_MIME_TYPE);
+            $mime  = $finfo->buffer($data);
+    
+            if (strpos($mime, 'image/') === 0) {
+                return md5($data);
+            }
+        }
+    
+        return null;
     }
+    
+    private function curlGetBinary(string $url): ?string {
+        $ch = curl_init($url);
+        if (!$ch) return null;
+    
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_MAXREDIRS      => 5,
+            CURLOPT_CONNECTTIMEOUT => 10,
+            CURLOPT_TIMEOUT        => 15,
+            CURLOPT_USERAGENT      => 'Mozilla/5.0 (ThreatScope)',
+            CURLOPT_SSL_VERIFYPEER => false,
+            CURLOPT_SSL_VERIFYHOST => false,
+            CURLOPT_HEADER         => false,
+            CURLOPT_BINARYTRANSFER => true
+        ]);
+    
+        $data = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+    
+        if ($data === false || $httpCode >= 400) {
+            return null;
+        }
+    
+        return $data;
+    }
+    
 
     private function looksPhishyTitle(string $title): bool {
         $keywords = [
