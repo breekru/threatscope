@@ -1,0 +1,12 @@
+{
+    "signals": {
+      "new_domain": 30,
+      "has_mx": 20,
+      "suspicious_keyword": 15
+    },
+    "thresholds": {
+      "high": 70,
+      "medium": 40
+    }
+  }
+  
