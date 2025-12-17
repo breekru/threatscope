@@ -114,51 +114,32 @@ class Scheduler {
        private function upsertSignal(int $domainId, string $name, string $value): void {
         $pdo = DB::conn();
     
-        $stmt = $pdo->prepare("
-            INSERT INTO ts_signals
-            (domain_id, signal_name, signal_value, first_seen_at, computed_at)
-            VALUES (:did, :name, :val, NOW(), NOW())
-            ON DUPLICATE KEY UPDATE
-                signal_value = VALUES(signal_value),
-                computed_at  = NOW()
-        ");
-    
-        $stmt->execute([
-            ':did'  => $domainId,
-            ':name' => $name,
-            ':val'  => $value
-        ]);
-
-        $existing = $stmt->fetch();
-
-        if ($existing) {
-            // Update value + computed_at ONLY
-            $upd = $pdo->prepare("
-                UPDATE ts_signals
-                SET signal_value = :val,
-                    computed_at = NOW()
-                WHERE domain_id = :did
-                  AND signal_name = :name
-            ");
-            $upd->execute([
-                ':val'  => $value,
-                ':did'  => $domainId,
-                ':name' => $name
-            ]);
-        } else {
-            // Insert with first_seen_at
-            $ins = $pdo->prepare("
+        try {
+            $stmt = $pdo->prepare("
                 INSERT INTO ts_signals
-                (domain_id, signal_name, signal_value, first_seen_at, computed_at)
-                VALUES (:did, :name, :val, NOW(), NOW())
+                    (domain_id, signal_name, signal_value, first_seen_at, computed_at)
+                VALUES
+                    (:did, :name, :val, NOW(), NOW())
+                ON DUPLICATE KEY UPDATE
+                    signal_value = VALUES(signal_value),
+                    computed_at  = NOW()
             ");
-            $ins->execute([
+    
+            $stmt->execute([
                 ':did'  => $domainId,
                 ':name' => $name,
                 ':val'  => $value
             ]);
+    
+        } catch (\PDOException $e) {
+            // Duplicate signals or race conditions must NEVER fail a module
+            Logger::warning(
+                "Signal upsert ignored for domain {$domainId}, signal {$name}: " .
+                $e->getMessage()
+            );
         }
     }
+    
 
     private function handleFaviconReuse(int $domainId): void {
         $pdo = DB::conn();
