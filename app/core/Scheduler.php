@@ -110,20 +110,22 @@ class Scheduler {
        Signal Handling (FIXES LIVE HERE)
        ============================ */
 
-    private function upsertSignal(int $domainId, string $name, string $value): void {
+       private function upsertSignal(int $domainId, string $name, string $value): void {
         $pdo = DB::conn();
-
-        // Does this signal already exist?
+    
         $stmt = $pdo->prepare("
-            SELECT first_seen_at
-            FROM ts_signals
-            WHERE domain_id = :did
-              AND signal_name = :name
-            LIMIT 1
+            INSERT INTO ts_signals
+            (domain_id, signal_name, signal_value, first_seen_at, computed_at)
+            VALUES (:did, :name, :val, NOW(), NOW())
+            ON DUPLICATE KEY UPDATE
+                signal_value = VALUES(signal_value),
+                computed_at  = NOW()
         ");
+    
         $stmt->execute([
             ':did'  => $domainId,
-            ':name' => $name
+            ':name' => $name,
+            ':val'  => $value
         ]);
 
         $existing = $stmt->fetch();
