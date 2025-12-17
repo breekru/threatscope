@@ -32,7 +32,8 @@ class Scheduler {
                 Logger::error("Module {$class} does not implement ModuleInterface");
                 continue;
             }
-        
+            Logger::info("Loaded module {$def['name']} with ID {$def['id']}");
+
             foreach ($domains as $domain) {
                 $this->runModuleForDomain($module, $domain);
             }
