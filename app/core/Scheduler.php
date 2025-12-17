@@ -150,5 +150,9 @@ class Scheduler {
                 ]);
             }
         }
+        // Recalculate risk score after new signals
+        $scorer = new ScoringEngine();
+        $scorer->recalcDomain($domainId);
+
     }
 }

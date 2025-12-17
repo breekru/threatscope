@@ -2,6 +2,13 @@
 require __DIR__ . '/app/bootstrap.php';
 $pdo = DB::conn();
 
+function riskLabel(int $score): string {
+  if ($score >= 70) return 'HIGH';
+  if ($score >= 40) return 'MEDIUM';
+  return 'LOW';
+}
+
+
 $domains = $pdo->query("
 SELECT d.id, d.domain, d.status, d.risk_score,
        GROUP_CONCAT(CONCAT(ls.signal_name, '=', ls.signal_value) SEPARATOR ', ') AS signals
@@ -39,7 +46,11 @@ ORDER BY d.updated_at DESC
 <tr>
   <td><?= htmlspecialchars($d['domain']) ?></td>
   <td><span class="badge"><?= $d['status'] ?></span></td>
-  <td><?= (int)$d['risk_score'] ?></td>
+  <td>
+  <?= (int)$d['risk_score'] ?>
+  <span class="badge"><?= riskLabel((int)$d['risk_score']) ?></span>
+</td>
+
   <td><?= htmlspecialchars($d['signals'] ?? '') ?></td>
 </tr>
 <?php endforeach; ?>
