@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 class Scheduler {
+
     private ModuleLoader $loader;
 
     public function __construct() {
@@ -9,87 +10,221 @@ class Scheduler {
     }
 
     public function run(): void {
-        Logger::info("ThreatScope scheduler started");
+        Logger::info('ThreatScope scheduler started');
 
         $modules = $this->loader->loadEnabledModules();
-        if (empty($modules)) {
-            Logger::info("No enabled modules found. Exiting.");
+        $domains = $this->loadDomains();
+
+        foreach ($modules as $module) {
+            foreach ($domains as $domain) {
+                $this->runModuleForDomain($module, $domain);
+            }
+        }
+
+        Logger::info('ThreatScope scheduler finished');
+    }
+
+    /* ============================
+       Core Execution
+       ============================ */
+
+    private function runModuleForDomain(ModuleInterface $module, array $domain): void {
+        $pdo = DB::conn();
+
+        $runId = $this->startRun($module, (int)$domain['id']);
+
+        try {
+            $result = $module->run($domain['domain']);
+            $this->persistModuleResult(
+                (int)$domain['id'],
+                (int)$module->id,
+                $result
+            );
+
+            $this->finishRun($runId, 'success');
+        } catch (\Throwable $e) {
+            $this->finishRun($runId, 'error', $e->getMessage());
+            Logger::error("Module {$module->getName()} failed: {$e->getMessage()}");
+        }
+    }
+
+    /* ============================
+       Persistence
+       ============================ */
+
+    private function persistModuleResult(int $domainId, int $moduleId, array $result): void {
+        $pdo = DB::conn();
+
+        // ---- Observations ----
+        foreach ($result['observations'] ?? [] as $obs) {
+            $stmt = $pdo->prepare("
+                INSERT INTO ts_observations (domain_id, module_id, key_name, value, observed_at)
+                VALUES (:did, :mid, :k, :v, NOW())
+            ");
+            $stmt->execute([
+                ':did' => $domainId,
+                ':mid' => $moduleId,
+                ':k'   => $obs['key'],
+                ':v'   => $obs['value']
+            ]);
+        }
+
+        // ---- Signals ----
+        foreach ($result['signals'] ?? [] as $sig) {
+            $this->upsertSignal(
+                $domainId,
+                $sig['name'],
+                $sig['value']
+            );
+        }
+
+        // ---- Derived Signal: favicon_hash_reused ----
+        $this->handleFaviconReuse($domainId);
+
+        // ---- Recalculate Risk ----
+        $scorer = new ScoringEngine();
+        $scorer->recalcDomain($domainId);
+    }
+
+    /* ============================
+       Signal Handling (FIXES LIVE HERE)
+       ============================ */
+
+    private function upsertSignal(int $domainId, string $name, string $value): void {
+        $pdo = DB::conn();
+
+        // Does this signal already exist?
+        $stmt = $pdo->prepare("
+            SELECT first_seen_at
+            FROM ts_signals
+            WHERE domain_id = :did
+              AND signal_name = :name
+            LIMIT 1
+        ");
+        $stmt->execute([
+            ':did'  => $domainId,
+            ':name' => $name
+        ]);
+
+        $existing = $stmt->fetch();
+
+        if ($existing) {
+            // Update value + computed_at ONLY
+            $upd = $pdo->prepare("
+                UPDATE ts_signals
+                SET signal_value = :val,
+                    computed_at = NOW()
+                WHERE domain_id = :did
+                  AND signal_name = :name
+            ");
+            $upd->execute([
+                ':val'  => $value,
+                ':did'  => $domainId,
+                ':name' => $name
+            ]);
+        } else {
+            // Insert with first_seen_at
+            $ins = $pdo->prepare("
+                INSERT INTO ts_signals
+                (domain_id, signal_name, signal_value, first_seen_at, computed_at)
+                VALUES (:did, :name, :val, NOW(), NOW())
+            ");
+            $ins->execute([
+                ':did'  => $domainId,
+                ':name' => $name,
+                ':val'  => $value
+            ]);
+        }
+    }
+
+    private function handleFaviconReuse(int $domainId): void {
+        $pdo = DB::conn();
+
+        // Get favicon hash for this domain
+        $stmt = $pdo->prepare("
+            SELECT value
+            FROM ts_observations
+            WHERE domain_id = :did
+              AND key_name = 'favicon_hash_md5'
+            ORDER BY observed_at DESC
+            LIMIT 1
+        ");
+        $stmt->execute([':did' => $domainId]);
+        $hash = $stmt->fetchColumn();
+
+        if (!$hash) return;
+
+        // Count other domains with same hash
+        $stmt = $pdo->prepare("
+            SELECT COUNT(DISTINCT domain_id)
+            FROM ts_observations
+            WHERE key_name = 'favicon_hash_md5'
+              AND value = :hash
+        ");
+        $stmt->execute([':hash' => $hash]);
+        $count = (int)$stmt->fetchColumn();
+
+        if ($count <= 1) return;
+
+        // Deduplicate derived signal
+        if ($this->signalExists($domainId, 'favicon_hash_reused')) {
             return;
         }
 
-        foreach ($modules as $m) {
-            $this->runModuleForBatch($m['db_id'], $m['object']);
-        }
-
-        Logger::info("ThreatScope scheduler finished");
+        $pdo->prepare("
+            INSERT INTO ts_signals
+            (domain_id, signal_name, signal_value, first_seen_at, computed_at)
+            VALUES (:did, 'favicon_hash_reused', 'true', NOW(), NOW())
+        ")->execute([':did' => $domainId]);
     }
 
-    private function runModuleForBatch(int $moduleDbId, ModuleInterface $module): void {
-        $pdo = DB::conn();
-        $moduleName = $module->getName();
+    private function signalExists(int $domainId, string $signal): bool {
+        $stmt = DB::conn()->prepare("
+            SELECT 1
+            FROM ts_signals
+            WHERE domain_id = :did
+              AND signal_name = :sig
+            LIMIT 1
+        ");
+        $stmt->execute([
+            ':did' => $domainId,
+            ':sig' => $signal
+        ]);
 
-        // Mark run start
-        $runId = $this->createRun($moduleDbId);
-
-        try {
-            // Basic rate limit: max N domains per scheduler run for this module
-            $limit = max(1, $module->getRateLimit());
-
-            // Select domains. MVP policy:
-            // - skip ignore/mitigated
-            // - prioritize new/triage
-            $stmt = $pdo->prepare("
-                SELECT id, domain
-                FROM ts_domains
-                WHERE status IN ('new','triage','investigating')
-                ORDER BY FIELD(status,'new','triage','investigating'), updated_at ASC
-                LIMIT :lim
-            ");
-            $stmt->bindValue(':lim', $limit, PDO::PARAM_INT);
-            $stmt->execute();
-            $domains = $stmt->fetchAll();
-
-            $processed = 0;
-            foreach ($domains as $d) {
-                $domainId = (int)$d['id'];
-                $domain   = (string)$d['domain'];
-
-                $result = $module->run($domain);
-
-                $this->persistModuleResult($domainId, $moduleDbId, $result);
-
-                // Touch last_seen
-                $upd = $pdo->prepare("UPDATE ts_domains SET last_seen = NOW() WHERE id = :id");
-                $upd->execute([':id' => $domainId]);
-
-                $processed++;
-            }
-
-            $this->finishRun($runId, 'success', null);
-            $this->touchModule($moduleDbId, null);
-
-            Logger::info("Module {$moduleName} completed. Domains processed: {$processed}");
-        } catch (Throwable $e) {
-            $msg = $e->getMessage();
-            $this->finishRun($runId, 'error', $msg);
-            $this->touchModule($moduleDbId, $msg);
-
-            Logger::error("Module {$moduleName} failed: {$msg}");
-        }
+        return (bool)$stmt->fetchColumn();
     }
 
-    private function createRun(int $moduleDbId): int {
-        $pdo = DB::conn();
-        $stmt = $pdo->prepare("INSERT INTO ts_runs (module_id, started_at, status) VALUES (:mid, NOW(), 'partial')");
-        $stmt->execute([':mid' => $moduleDbId]);
-        return (int)$pdo->lastInsertId();
+    /* ============================
+       Helpers
+       ============================ */
+
+    private function loadDomains(): array {
+        return DB::conn()->query("
+            SELECT id, domain
+            FROM ts_domains
+            WHERE status != 'ignored'
+        ")->fetchAll();
     }
 
-    private function finishRun(int $runId, string $status, ?string $error): void {
-        $pdo = DB::conn();
-        $stmt = $pdo->prepare("
+    private function startRun(ModuleInterface $module, int $domainId): int {
+        $stmt = DB::conn()->prepare("
+            INSERT INTO ts_runs (module_id, domain_id, started_at, status)
+            VALUES (:mid, :did, NOW(), 'running')
+        ");
+        $stmt->execute([
+            ':mid' => $module->id,
+            ':did' => $domainId
+        ]);
+
+        return (int)DB::conn()->lastInsertId();
+    }
+
+    private function finishRun(int $runId, string $status, ?string $error = null): void {
+        $stmt = DB::conn()->prepare("
             UPDATE ts_runs
-            SET finished_at = NOW(), status = :st, error_message = :err
+            SET finished_at = NOW(),
+                status = :st,
+                error_message = :err
             WHERE id = :id
         ");
         $stmt->execute([
@@ -97,82 +232,5 @@ class Scheduler {
             ':err' => $error,
             ':id'  => $runId
         ]);
-    }
-
-    private function touchModule(int $moduleDbId, ?string $error): void {
-        $pdo = DB::conn();
-        $stmt = $pdo->prepare("
-            UPDATE ts_modules
-            SET last_run = NOW(), last_error = :err
-            WHERE id = :id
-        ");
-        $stmt->execute([
-            ':err' => $error,
-            ':id'  => $moduleDbId
-        ]);
-    }
-
-    private function persistModuleResult(int $domainId, int $moduleId, array $result): void {
-        $pdo = DB::conn();
-
-        $observations = $result['observations'] ?? [];
-        $signals      = $result['signals'] ?? [];
-
-        // Observations are immutable: insert rows; do not update older rows.
-        if (is_array($observations)) {
-            $stmt = $pdo->prepare("
-                INSERT INTO ts_observations (domain_id, module_id, key_name, value, observed_at)
-                VALUES (:did, :mid, :k, :v, NOW())
-            ");
-            foreach ($observations as $o) {
-                if (!isset($o['key'])) continue;
-                $stmt->execute([
-                    ':did' => $domainId,
-                    ':mid' => $moduleId,
-                    ':k'   => (string)$o['key'],
-                    ':v'   => isset($o['value']) ? (string)$o['value'] : null,
-                ]);
-            }
-        }
-        // Favicon reuse detection
-        $stmt = $pdo->prepare("
-        SELECT COUNT(DISTINCT domain_id) AS cnt
-        FROM ts_observations
-        WHERE key_name = 'favicon_hash_md5'
-        AND value IN (
-            SELECT value
-            FROM ts_observations
-            WHERE domain_id = :did AND key_name = 'favicon_hash_md5'
-        )
-        ");
-        $stmt->execute([':did' => $domainId]);
-        $row = $stmt->fetch();
-
-        if (!empty($row['cnt']) && (int)$row['cnt'] > 1) {
-        $pdo->prepare("
-            INSERT INTO ts_signals (domain_id, signal_name, signal_value, computed_at)
-            VALUES (:did, 'favicon_hash_reused', 'true', NOW())
-        ")->execute([':did' => $domainId]);
-        }
-
-        // Signals are recomputable. MVP approach: store a new snapshot row each run.
-        if (is_array($signals)) {
-            $stmt = $pdo->prepare("
-                INSERT INTO ts_signals (domain_id, signal_name, signal_value, computed_at)
-                VALUES (:did, :n, :v, NOW())
-            ");
-            foreach ($signals as $s) {
-                if (!isset($s['name'])) continue;
-                $stmt->execute([
-                    ':did' => $domainId,
-                    ':n'   => (string)$s['name'],
-                    ':v'   => isset($s['value']) ? (string)$s['value'] : null,
-                ]);
-            }
-        }
-        // Recalculate risk score after new signals
-        $scorer = new ScoringEngine();
-        $scorer->recalcDomain($domainId);
-
     }
 }
