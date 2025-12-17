@@ -12,14 +12,33 @@ class Scheduler {
     public function run(): void {
         Logger::info('ThreatScope scheduler started');
 
-        $modules = $this->loader->loadEnabledModules();
-        $domains = $this->loadDomains();
-
-        foreach ($modules as $module) {
+        $moduleDefs = $this->loader->loadEnabledModules();
+        $domains    = $this->loadDomains();
+        
+        foreach ($moduleDefs as $def) {
+            // Instantiate the module class
+            $class = $def['class'];
+        
+            if (!class_exists($class)) {
+                Logger::error("Module class {$class} not found");
+                continue;
+            }
+        
+            $module = new $class();
+        
+            // Attach DB metadata to the object
+            $module->id = (int)$def['id'];
+        
+            if (!($module instanceof ModuleInterface)) {
+                Logger::error("Module {$class} does not implement ModuleInterface");
+                continue;
+            }
+        
             foreach ($domains as $domain) {
                 $this->runModuleForDomain($module, $domain);
             }
         }
+        
 
         Logger::info('ThreatScope scheduler finished');
     }
