@@ -44,6 +44,23 @@ class HttpFingerprint implements ModuleInterface {
             }
         }
 
+        // Redirect chain detection
+        if (($result['redirects'] ?? 0) >= 2) {
+            $sig[] = ['name' => 'http_redirect_chain', 'value' => 'true'];
+            $obs[] = ['key' => 'http_redirect_count', 'value' => (string)$result['redirects']];
+        }
+
+        // Login form detection
+        if (!empty($result['html']) && $this->hasLoginForm($result['html'])) {
+            $sig[] = ['name' => 'http_login_form', 'value' => 'true'];
+        }
+
+        // Suspicious server header
+        $serverHeader = $result['headers']['Server'] ?? null;
+        if ($this->suspiciousServer($serverHeader)) {
+            $sig[] = ['name' => 'http_suspicious_server', 'value' => 'true'];
+        }
+
         // Favicon hash
         $faviconHash = $this->fetchFaviconHash($result['final_url'] ?? '');
         if ($faviconHash) {
@@ -100,8 +117,11 @@ class HttpFingerprint implements ModuleInterface {
             'status' => $status,
             'headers' => $headers,
             'title' => $title,
+            'html' => $content,
             'final_url' => $this->extractFinalUrl($http_response_header),
+            'redirects' => count(array_filter($http_response_header, fn($h) => stripos($h, 'Location:') === 0))
         ];
+        
     }
 
     private function extractFinalUrl(array $responseHeaders): ?string {
@@ -111,6 +131,27 @@ class HttpFingerprint implements ModuleInterface {
             }
         }
         return null;
+    }
+
+    private function hasLoginForm(string $html): bool {
+        return (bool)preg_match('/type\s*=\s*["\']password["\']/i', $html);
+    }
+    
+    private function suspiciousServer(?string $server): bool {
+        if (!$server) return false;
+    
+        $bad = [
+            'nginx/1.18.0',
+            'openresty',
+            'cloudflare',
+            'apache/2.4.49'
+        ];
+    
+        $s = strtolower($server);
+        foreach ($bad as $b) {
+            if (strpos($s, $b) !== false) return true;
+        }
+        return false;
     }
 
     private function fetchFaviconHash(string $baseUrl): ?string {

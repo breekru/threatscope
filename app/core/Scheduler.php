@@ -134,6 +134,26 @@ class Scheduler {
                 ]);
             }
         }
+        // Favicon reuse detection
+        $stmt = $pdo->prepare("
+        SELECT COUNT(DISTINCT domain_id) AS cnt
+        FROM ts_observations
+        WHERE key_name = 'favicon_hash_md5'
+        AND value IN (
+            SELECT value
+            FROM ts_observations
+            WHERE domain_id = :did AND key_name = 'favicon_hash_md5'
+        )
+        ");
+        $stmt->execute([':did' => $domainId]);
+        $row = $stmt->fetch();
+
+        if (!empty($row['cnt']) && (int)$row['cnt'] > 1) {
+        $pdo->prepare("
+            INSERT INTO ts_signals (domain_id, signal_name, signal_value, computed_at)
+            VALUES (:did, 'favicon_hash_reused', 'true', NOW())
+        ")->execute([':did' => $domainId]);
+        }
 
         // Signals are recomputable. MVP approach: store a new snapshot row each run.
         if (is_array($signals)) {
