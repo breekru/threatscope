@@ -1,6 +1,11 @@
 <?php
 declare(strict_types=1);
 
+// Load environment secrets if present
+$envPath = '/home/website/env/env.php';
+if (file_exists($envPath)) {
+    require_once $envPath;
+
 require __DIR__ . '/../app/bootstrap.php';
 
 try {
