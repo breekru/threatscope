@@ -243,6 +243,7 @@ class Scheduler {
     }
 
     private function markDomainActiveIfNew(int $domainId): void {
+        Logger::info("Attempting status transition for domain_id={$domainId}");
         $pdo = DB::conn();
     
         $stmt = $pdo->prepare("
