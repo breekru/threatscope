@@ -16,17 +16,16 @@ class Scheduler {
         $domains    = $this->loadDomains();
         
         foreach ($moduleDefs as $def) {
-            // Instantiate the module class
-            $class = $def['class'];
+        
+            // Convert snake_case to StudlyCaps class name
+            $class = str_replace(' ', '', ucwords(str_replace('_', ' ', $def['name'])));
         
             if (!class_exists($class)) {
-                Logger::error("Module class {$class} not found");
+                Logger::error("Module class {$class} not found for module {$def['name']}");
                 continue;
             }
         
             $module = new $class();
-        
-            // Attach DB metadata to the object
             $module->id = (int)$def['id'];
         
             if (!($module instanceof ModuleInterface)) {
@@ -38,6 +37,7 @@ class Scheduler {
                 $this->runModuleForDomain($module, $domain);
             }
         }
+        
         
 
         Logger::info('ThreatScope scheduler finished');
