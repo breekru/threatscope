@@ -62,6 +62,7 @@ class Scheduler {
             );
 
             $this->finishRun($runId, 'success');
+            $this->markDomainActiveIfNew((int)$domain['id']);
         } catch (\Throwable $e) {
             $this->finishRun($runId, 'error', $e->getMessage());
             Logger::error("Module {$module->getName()} failed: {$e->getMessage()}");
@@ -240,6 +241,20 @@ class Scheduler {
 
         return (int)DB::conn()->lastInsertId();
     }
+
+    private function markDomainActiveIfNew(int $domainId): void {
+        $pdo = DB::conn();
+    
+        $stmt = $pdo->prepare("
+            UPDATE ts_domains
+            SET status = 'active'
+            WHERE id = :id
+              AND status = 'new'
+        ");
+    
+        $stmt->execute([':id' => $domainId]);
+    }
+    
 
     private function finishRun(int $runId, string $status, ?string $error = null): void {
         $stmt = DB::conn()->prepare("
