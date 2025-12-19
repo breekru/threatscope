@@ -39,7 +39,15 @@ class Scheduler {
             }
         }
         
-        
+        // After all modules complete:
+        global $appConfig;
+
+        $evaluator = new AlertEvaluator($appConfig);
+        $evaluator->evaluate();
+
+        $notifier = new EmailNotifier($appConfig);
+        $notifier->sendPending();
+
 
         Logger::info('ThreatScope scheduler finished');
     }
