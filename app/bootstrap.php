@@ -15,6 +15,7 @@ date_default_timezone_set('UTC');
 spl_autoload_register(function ($class) {
     $paths = [
         __DIR__ . '/core/' . $class . '.php',
+        __DIR__ . '/helpers/' . $class . '.php',
     ];
     foreach ($paths as $p) {
         if (file_exists($p)) { require_once $p; return; }

@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/auth/guard.php';
-require __DIR__ . '/app/bootstrap.php';
+require_once __DIR__ . '/partials/header.php';
+//require __DIR__ . '/app/bootstrap.php';
 $pdo = DB::conn();
 
 function riskLabel(int $score): string {
