@@ -48,8 +48,9 @@ class Scheduler {
         $notifier = new EmailNotifier($appConfig);
         $notifier->sendPending();
 
-
+        JobState::touch('scheduler_run');
         Logger::info('ThreatScope scheduler finished');
+        
     }
 
     /* ============================
