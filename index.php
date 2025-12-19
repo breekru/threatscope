@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/auth/guard.php';
 require __DIR__ . '/app/bootstrap.php';
 $pdo = DB::conn();
 

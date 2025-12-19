@@ -1,5 +1,8 @@
 <?php
 declare(strict_types=1);
+if (session_status() !== PHP_SESSION_ACTIVE) {
+    session_start();
+}
 
 // Load environment secrets if present
 $envPath = '/home/blkfarms/env/env.php';
