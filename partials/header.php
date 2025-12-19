@@ -38,8 +38,8 @@ $lastRunUtc = SystemStatus::lastSchedulerRun();
     const el = document.getElementById('cron-time');
     if (!el) return;
 
-    const utc = el.dataset.utc + 'Z';
-    const date = new Date(utc);
+    const date = new Date(el.dataset.utc + ' UTC');
+
 
     if (!isNaN(date)) {
         el.textContent = 'Last scan: ' + date.toLocaleString();
