@@ -137,7 +137,7 @@ return [
         /*
          | Risk thresholds (must align with scoring scale)
          */
-        'high_threshold'     => 1,
+        'high_threshold'     => 70,
         'critical_threshold' => 90,
 
         /*
