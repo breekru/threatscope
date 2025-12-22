@@ -1,13 +1,8 @@
-ini_set('display_errors', '1');
-ini_set('display_startup_errors', '1');
-error_reporting(E_ALL);
-
-
 <?php
 declare(strict_types=1);
 
 require_once __DIR__ . '/auth/guard.php';
-require_once __DIR__ . '/partials/header.php';
+//require_once __DIR__ . '/partials/header.php';
 
 // -------------------------
 // Validate input
