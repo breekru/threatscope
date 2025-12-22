@@ -45,7 +45,6 @@ ORDER BY d.updated_at DESC
   <th>Signals</th>
 </tr>
 <?php foreach ($domains as $d): ?>
-  <?php var_dump($d); ?>
   <tr onclick="window.location='/domain.php?id=<?= (int)$d['id'] ?>'" style="cursor:pointer;">
 
   <td><?= htmlspecialchars($d['domain']) ?></td>
