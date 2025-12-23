@@ -116,8 +116,9 @@ $users = $pdo->query("
 <a href="/index.php">&larr; Back to Dashboard</a>
 
 <?php if ($message): ?>
-    <div class="msg"><?= htmlspecialchars($message) ?></div>
+    <div class="msg"><?= $message ?></div>
 <?php endif; ?>
+
 
 <h3>Create User</h3>
 <form method="post">
