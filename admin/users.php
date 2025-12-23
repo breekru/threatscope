@@ -24,7 +24,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'invit
         $token
     );
 
-    $message = "Password setup link (expires in 24h): <br><code>{$inviteLink}</code>";
+    $message = sprintf(
+        '<div>
+            <div style="margin-bottom:6px;">
+                Password setup link (expires in 24h):
+            </div>
+            <div style="display:flex;gap:6px;align-items:center;">
+                <input
+                    type="text"
+                    id="inviteLink"
+                    value="%1$s"
+                    readonly
+                    style="flex:1;padding:6px;background:#020617;color:#e5e7eb;border:1px solid #334155;border-radius:4px;"
+                >
+                <button
+                    type="button"
+                    onclick="copyInviteLink()"
+                    style="padding:6px 10px;cursor:pointer;"
+                >
+                    Copy
+                </button>
+            </div>
+            <div id="copyStatus" style="margin-top:4px;font-size:12px;color:#4ade80;display:none;">
+                Copied to clipboard
+            </div>
+        </div>',
+        htmlspecialchars($inviteLink, ENT_QUOTES)
+    );
+    
 }
 
 
@@ -178,6 +205,25 @@ $users = $pdo->query("
     </select>
     <button class="btn">Generate Link</button>
 </form>
+<script>
+function copyInviteLink() {
+    const input = document.getElementById('inviteLink');
+    const status = document.getElementById('copyStatus');
+
+    if (!input) return;
+
+    input.select();
+    input.setSelectionRange(0, 99999); // mobile safe
+
+    try {
+        document.execCommand('copy');
+        status.style.display = 'block';
+        setTimeout(() => status.style.display = 'none', 2000);
+    } catch (e) {
+        alert('Unable to copy automatically. Please copy manually.');
+    }
+}
+</script>
 
 </body>
 </html>
