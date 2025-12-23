@@ -7,7 +7,7 @@ $lastRunUtc = SystemStatus::lastSchedulerRun();
 <div style="
     display:flex;
     justify-content:space-between;
-    align-items:right;
+    align-items:center;
     background:#020617;
     color:#e5e7eb;
     padding:10px 16px;
