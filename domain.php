@@ -15,6 +15,25 @@ if ($domainId <= 0) {
     exit;
 }
 
+
+//--------------------------
+//Simple Mapping
+//--------------------------
+function moduleName(int $id): string
+{
+    $map = [
+        1 => 'DNS Basic',
+        2 => 'WHOIS Basic',
+        3 => 'TLS Intel',
+        4 => 'HTTP Fingerprint',
+        5 => 'MX Check',
+    ];
+
+    return $map[$id] ?? 'Module #' . $id;
+}
+
+
+
 // -------------------------
 // Load domain
 // -------------------------
@@ -49,7 +68,7 @@ $signals = $stmt->fetchAll();
 // Load observations (raw evidence)
 // -------------------------
 $stmt = DB::conn()->prepare("
-    SELECT module, observation_key, observation_value, observed_at
+    SELECT module_id, key_name, value, observed_at
     FROM ts_observations
     WHERE domain_id = ?
     ORDER BY observed_at DESC
@@ -57,6 +76,7 @@ $stmt = DB::conn()->prepare("
 ");
 $stmt->execute([$domainId]);
 $observations = $stmt->fetchAll();
+
 
 // -------------------------
 // Helper: human-readable signal names
@@ -227,7 +247,7 @@ function riskLabel(int $score): string
                 <thead>
                     <tr>
                         <th>Time (UTC)</th>
-                        <th>Module</th>
+                        <th>Module ID</th>
                         <th>Key</th>
                         <th>Value</th>
                     </tr>
@@ -236,9 +256,9 @@ function riskLabel(int $score): string
                 <?php foreach ($observations as $o): ?>
                     <tr>
                         <td><?= htmlspecialchars($o['observed_at']) ?></td>
-                        <td><?= htmlspecialchars($o['module']) ?></td>
-                        <td><?= htmlspecialchars($o['observation_key']) ?></td>
-                        <td class="mono"><?= htmlspecialchars((string)$o['observation_value']) ?></td>
+                        <td><?= htmlspecialchars(moduleName((int)$o['module_id'])) ?></td>
+                        <td><?= htmlspecialchars($o['key_name']) ?></td>
+                        <td class="mono"><?= htmlspecialchars((string)$o['value']) ?></td>
                     </tr>
                 <?php endforeach; ?>
                 </tbody>
