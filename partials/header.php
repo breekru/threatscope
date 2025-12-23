@@ -25,6 +25,17 @@ $lastRunUtc = SystemStatus::lastSchedulerRun();
         <?php endif; ?>
     </div>
 
+    <?php
+$stmt = DB::conn()->prepare("SELECT is_admin FROM ts_users WHERE id = ?");
+$stmt->execute([$_SESSION['user_id']]);
+if ((int)$stmt->fetchColumn() === 1):
+?>
+    <a href="/admin/users.php" style="margin-left:10px;color:#93c5fd;">
+        Admin
+    </a>
+<?php endif; ?>
+
+
     <?php if (Auth::check()): ?>
         <a href="/auth/logout.php"
            style="color:#93c5fd;text-decoration:none;">
