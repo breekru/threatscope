@@ -6,6 +6,28 @@ require_once __DIR__ . '/../auth/admin_guard.php';
 $pdo = DB::conn();
 $message = null;
 
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'invite') {
+    $userId = (int)$_POST['user_id'];
+
+    $token = bin2hex(random_bytes(32));
+    $expires = (new DateTimeImmutable('+24 hours', new DateTimeZone('UTC')))
+        ->format('Y-m-d H:i:s');
+
+    $pdo->prepare("
+        INSERT INTO ts_user_invites (user_id, token, expires_at)
+        VALUES (?, ?, ?)
+    ")->execute([$userId, $token, $expires]);
+
+    $inviteLink = sprintf(
+        'https://%s/auth/set_password.php?token=%s',
+        $_SERVER['HTTP_HOST'],
+        $token
+    );
+
+    $message = "Password setup link (expires in 24h): <br><code>{$inviteLink}</code>";
+}
+
+
 // -----------------------------
 // Handle create user
 // -----------------------------
@@ -140,6 +162,21 @@ $users = $pdo->query("
 </tr>
 <?php endforeach; ?>
 </table>
+<h3>Generate Password Setup Link</h3>
+
+<form method="post">
+    <input type="hidden" name="action" value="invite">
+    <select name="user_id" required>
+        <?php foreach ($users as $u): ?>
+            <?php if ($u['enabled']): ?>
+                <option value="<?= (int)$u['id'] ?>">
+                    <?= htmlspecialchars($u['username']) ?>
+                </option>
+            <?php endif; ?>
+        <?php endforeach; ?>
+    </select>
+    <button class="btn">Generate Link</button>
+</form>
 
 </body>
 </html>
